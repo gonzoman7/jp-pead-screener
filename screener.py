@@ -60,21 +60,22 @@ def run_pead_screener():
     try:
         id_token = get_jquants_id_token()
     except Exception as e:
+        error_msg = f"❌ 【PEADスクリーニング エラー】\n{str(e)}"
         print(e)
+        send_slack_notification(error_msg)
         return
 
     headers = {"Authorization": f"Bearer {id_token}"}
     
-    # 上場銘柄の取得（必要に応じて対象を絞り込み可能）
     companies = fetch_listed_companies(headers)
     if not companies:
         print("銘柄情報を取得できませんでした。")
+        send_slack_notification("⚠️ 【PEADスクリーニング】銘柄情報の取得に失敗しました。")
         return
 
     hit_stocks = []
 
-    # ※サンプルとして上位銘柄、または全銘柄をループ（API制限やテスト時はスライス等で調整してください）
-    for company in companies[:50]:  # まずは動作確認を兼ねて上位50件でテスト
+    for company in companies[:50]:  # テスト用件数
         code = company.get("Code")
         name = company.get("CompanyName")
         
@@ -82,30 +83,18 @@ def run_pead_screener():
         if df_prices.empty or len(df_prices) < 40:
             continue
             
-        # 【仮定】直近の決算発表日をシミュレーション、または財務API等から取得した発表日を利用
-        # ここでは直近の大きな窓開けやボラティリティ発生日、あるいはダミーの最新決算日を想定するロジックのベースを記載
-        # ※実際のJ-Quants財務情報API等から取得した「DisclosureDate」に置き換えてご活用ください
-        
-        # 例として、直近25営業日以内のどこかを選択（実際には決算発表日リストと突合します）
-        # ここでは簡易的に「直近10〜20営業日前」の期間に高値をつけていた銘柄をシミュレートする判定例
-        
-        recent_window = df_prices.tail(30) # 直近30営業日
+        recent_window = df_prices.tail(30)
         if len(recent_window) < 20:
             continue
             
-        # 発表後（10〜20営業日前）の期間と、現在の位置関係を評価
-        # 初動の高値（例：10〜20営業日前につけた高値）
         initial_period = recent_window.iloc[-20:-10]
         if initial_period.empty:
             continue
             
         initial_high = initial_period['High'].max()
         current_close = recent_window.iloc[-1]['Close']
-        base_price = recent_window.iloc[-30]['Close'] # 基準となる発表前価格
+        base_price = recent_window.iloc[-30]['Close']
         
-        # 条件判定：
-        # 1. 2週間前（10〜20営業日前）に高値をつけて以降、急落せずに踏みとどまっている（高値から-15%以内）
-        # 2. 発表前の水準よりもしっかりと上を維持している（+5%以上）
         is_digesting_well = (current_close >= initial_high * 0.85) and (current_close > base_price * 1.05)
         
         if is_digesting_well:
@@ -116,15 +105,17 @@ def run_pead_screener():
                 "initial_high": initial_high
             })
 
-    # 結果をSlackへ通知
+    # 【変更点】ヒット銘柄の有無に関わらず、必ずSlackへ結果を通知する
     if hit_stocks:
         msg = "🎯 【PEADスクリーニング通知 (2〜3週間経過・売りこなし完了銘柄)】\n"
         for s in hit_stocks:
-            msg += f"• {s['code']} {s['name']} (現在値: {s['current_close']}円 / 初動高値圏クリア)\n"
+            msg += f"• {s['code']} {s['name']} (現在値: {s['current_close']}円)\n"
         send_slack_notification(msg)
-        print("Slackへ通知を送信しました。")
+        print("Slackへ通知を送信しました（ヒット銘柄あり）。")
     else:
-        print("条件に一致する銘柄はありませんでした。")
+        msg = "ℹ️ 【PEADスクリーニング通知】本日の条件に一致する銘柄はありませんでした。"
+        send_slack_notification(msg)
+        print("条件に一致する銘柄はありませんでしたが、Slackへ完了通知を送信しました。")
 
 if __name__ == "__main__":
     run_pead_screener()
