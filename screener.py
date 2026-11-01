@@ -1,25 +1,10 @@
 import os
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
 
-# 環境変数から認証情報とWebhookを取得
-JQUANTS_MAIL = os.environ.get("JQUANTS_MAIL")
-JQUANTS_PASSWORD = os.environ.get("JQUANTS_PASSWORD")
+# GitHub SecretsからAPIキーとSlack Webhookを取得
+JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
-
-def get_jquants_id_token():
-    """J-Quants APIのIDトークンを取得する"""
-    url = "https://api.jquants.com/v1/token/auth_user"
-    payload = {
-        "mailaddress": JQUANTS_MAIL,
-        "password": JQUANTS_PASSWORD
-    }
-    response = requests.post(url, json=payload)
-    if response.status_code == 200:
-        return response.json().get("idToken")
-    else:
-        raise Exception(f"J-Quants認証エラー: {response.status_code} - {response.text}")
 
 def send_slack_notification(message):
     """Slackに通知を送信する"""
@@ -32,18 +17,18 @@ def send_slack_notification(message):
         print(f"Slack通知エラー: {response.text}")
 
 def fetch_listed_companies(headers):
-    """上場銘柄一覧を取得する"""
-    url = "https://api.jquants.com/v1/listed/info"
+    """上場銘柄一覧を取得する (V2 API)"""
+    url = "https://api.jquants.com/v2/listed/info"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         return response.json().get("info", [])
     else:
-        print(f"銘柄一覧取得エラー: {response.text}")
+        print(f"銘柄一覧取得エラー ({response.status_code}): {response.text}")
         return []
 
 def fetch_daily_prices(headers, code):
-    """指定銘柄の日足株価データを取得する"""
-    url = f"https://api.jquants.com/v1/prices/daily_quotes?code={code}"
+    """指定銘柄の日足株価データを取得する (V2 API)"""
+    url = f"https://api.jquants.com/v2/prices/daily_quotes?code={code}"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json().get("daily_quotes", [])
@@ -55,27 +40,27 @@ def fetch_daily_prices(headers, code):
     return pd.DataFrame()
 
 def run_pead_screener():
-    print("PEADスクリーニングを開始します（2〜3週間の売りこなし・トレンド継続判定）...")
+    print("PEADスクリーニングを開始します (J-Quants V2 API)...")
     
-    try:
-        id_token = get_jquants_id_token()
-    except Exception as e:
-        error_msg = f"❌ 【PEADスクリーニング エラー】\n{str(e)}"
-        print(e)
+    if not JQUANTS_API_KEY:
+        error_msg = "❌ 【PEADスクリーニング エラー】JQUANTS_API_KEY が設定されていません。"
+        print(error_msg)
         send_slack_notification(error_msg)
         return
 
-    headers = {"Authorization": f"Bearer {id_token}"}
+    # APIキー認証ヘッダー
+    headers = {"x-api-key": JQUANTS_API_KEY}
     
     companies = fetch_listed_companies(headers)
     if not companies:
-        print("銘柄情報を取得できませんでした。")
-        send_slack_notification("⚠️ 【PEADスクリーニング】銘柄情報の取得に失敗しました。")
+        error_msg = "⚠️ 【PEADスクリーニング】銘柄情報の取得に失敗しました。"
+        send_slack_notification(error_msg)
         return
 
     hit_stocks = []
 
-    for company in companies[:50]:  # テスト用件数
+    # テストとして最初の50件を処理
+    for company in companies[:50]:
         code = company.get("Code")
         name = company.get("CompanyName")
         
@@ -105,17 +90,16 @@ def run_pead_screener():
                 "initial_high": initial_high
             })
 
-    # 【変更点】ヒット銘柄の有無に関わらず、必ずSlackへ結果を通知する
     if hit_stocks:
-        msg = "🎯 【PEADスクリーニング通知 (2〜3週間経過・売りこなし完了銘柄)】\n"
+        msg = "🎯 【PEADスクリーニング通知 (売りこなし・トレンド継続)】\n"
         for s in hit_stocks:
             msg += f"• {s['code']} {s['name']} (現在値: {s['current_close']}円)\n"
         send_slack_notification(msg)
-        print("Slackへ通知を送信しました（ヒット銘柄あり）。")
+        print("Slackへヒット通知を送信しました。")
     else:
         msg = "ℹ️ 【PEADスクリーニング通知】本日の条件に一致する銘柄はありませんでした。"
         send_slack_notification(msg)
-        print("条件に一致する銘柄はありませんでしたが、Slackへ完了通知を送信しました。")
+        print("Slackへ完了通知（0件）を送信しました。")
 
 if __name__ == "__main__":
     run_pead_screener()
