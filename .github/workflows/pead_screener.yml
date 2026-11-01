@@ -24,6 +24,6 @@ jobs:
 
       - name: Run Screener
         env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          python screener.py
+        run: python screener.py
