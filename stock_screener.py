@@ -1,14 +1,13 @@
 import os
 import sys
 import time
+import jquantsapi
 import pandas as pd
 import requests
 
 JQUANTS_MAIL = os.environ.get("JQUANTS_MAIL")
 JQUANTS_PASSWORD = os.environ.get("JQUANTS_PASSWORD")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
-
-BASE_URL = "https://api.jquants.com/v1"
 
 
 def send_slack_notification(message):
@@ -26,21 +25,6 @@ def send_slack_notification(message):
     print(f"Slack通知例外発生: {e}")
 
 
-def get_id_token(mail, password):
-  url = f"{BASE_URL}/token/auth_user"
-  payload = {"mailaddress": mail, "password": password}
-  try:
-    res = requests.post(url, json=payload, timeout=10)
-    if res.status_code != 200:
-      print(f"認証APIエラー: {res.status_code}, {res.text}")
-      return None
-    data = res.json()
-    return data.get("idToken")
-  except Exception as e:
-    print(f"認証リクエスト例外: {e}")
-    return None
-
-
 def main():
   print("=== J-Quants API スクリーニング処理開始 ===")
 
@@ -51,26 +35,19 @@ def main():
     )
     sys.exit(1)
 
-  print("J-Quants APIへ接続認証を試行中...")
-  id_token = get_id_token(JQUANTS_MAIL, JQUANTS_PASSWORD)
-  if not id_token:
-    print("【認証エラー】J-Quantsへのログインに失敗しました（IDトークン取得不可）。")
+  try:
+    print("J-Quants APIへ接続認証を試行中...")
+    cli = jquantsapi.Client(mail_address=JQUANTS_MAIL, password=JQUANTS_PASSWORD)
+    print("認証成功しました。")
+  except Exception as e:
+    print(f"【認証エラー】J-Quantsへのログインに失敗しました: {e}")
     sys.exit(1)
-  print("認証成功しました。")
-
-  headers = {"Authorization": f"Bearer {id_token}"}
 
   try:
     print("上場銘柄一覧を取得中...")
-    res = requests.get(f"{BASE_URL}/listed/info", headers=headers, timeout=15)
-    if res.status_code != 200:
-      print(f"【エラー】銘柄一覧取得失敗: {res.status_code}, {res.text}")
-      sys.exit(1)
-
-    listed_data = res.json().get("info", [])
-    df_listed = pd.DataFrame(listed_data)
-    if df_listed.empty:
-      print("【エラー】銘柄一覧が空です。")
+    df_listed = cli.get_listed_info()
+    if df_listed is None or df_listed.empty:
+      print("【エラー】銘柄一覧が取得できませんでした（データが空です）。")
       sys.exit(1)
     print(f"取得成功: {len(df_listed)}件")
   except Exception as e:
@@ -93,20 +70,10 @@ def main():
       continue
 
     try:
-      res_p = requests.get(
-          f"{BASE_URL}/prices/daily_quotes",
-          headers=headers,
-          params={"code": code},
-          timeout=10,
-      )
-      if res_p.status_code != 200:
+      df_prices = cli.get_prices_daily_quotes(code=code)
+      if df_prices is None or df_prices.empty:
         continue
 
-      prices_data = res_p.json().get("daily_quotes", [])
-      if not prices_data:
-        continue
-
-      df_prices = pd.DataFrame(prices_data)
       df_prices["Date"] = pd.to_datetime(df_prices["Date"])
       df_prices = df_prices.sort_values("Date").reset_index(drop=True)
 
