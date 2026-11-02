@@ -43,6 +43,7 @@ def main():
 
   try:
     print("J-Quants APIへ接続認証を試行中...")
+    # J-Quants API V2の最新仕様に対応したクライアント初期化
     cli = jquantsapi.Client(mail_address=JQUANTS_MAIL, password=JQUANTS_PASSWORD)
     print("認証成功しました。")
   except Exception as e:
