@@ -94,3 +94,15 @@ def main():
     for stock in matched_stocks:
       msg += (
           f"• *{stock['code']}* {stock['name']} (直近出来高平均:"
+          f" {stock['recent_vol']:,})\n"
+      )
+    send_slack_notification(msg)
+    print("スクリーニング完了・Slack通知を送信しました。")
+  else:
+    print(
+        "条件に一致する銘柄はありませんでした（プログラムは正常に完走しました）。"
+    )
+
+
+if __name__ == "__main__":
+  main()
