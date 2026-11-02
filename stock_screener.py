@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import traceback
 import jquants_api_client
 import pandas as pd
 import requests
@@ -25,18 +26,20 @@ def send_slack_notification(message):
 
 
 def main():
-  print("=== J-Quants API (APIキー認証) スクリーニング処理開始 ===")
+  print("=== J-Quants API スクリーニング処理開始 ===")
 
   if not JQUANTS_API_KEY:
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
     sys.exit(1)
 
   try:
-    print("J-Quants APIへAPIキーで接続認証を試行中...")
-    cli = jquants_api_client.Client(api_key=JQUANTS_API_KEY)
+    print("J-Quants APIへ接続認証を試行中...")
+    # 環境変数 JQUANTS_API_KEY を自動認識します
+    cli = jquants_api_client.Client()
     print("認証成功しました。")
   except Exception as e:
     print(f"【認証エラー】J-Quantsへのログインに失敗しました: {e}")
+    traceback.print_exc()
     sys.exit(1)
 
   try:
@@ -48,6 +51,7 @@ def main():
     print(f"取得成功: {len(df_listed)}件")
   except Exception as e:
     print(f"【エラー】銘柄一覧取得時に例外が発生しました: {e}")
+    traceback.print_exc()
     sys.exit(1)
 
   if "ScaleCategory" in df_listed.columns:
@@ -84,7 +88,9 @@ def main():
               "recent_vol": int(recent_vol),
               "avg_vol": int(avg_vol),
           })
-    except Exception:
+    except Exception as e:
+      # 個別銘柄の取得エラーはスキップしつつログに残す
+      print(f"[警告] 銘柄 {code} の処理中に例外: {e}")
       continue
 
     time.sleep(0.2)
