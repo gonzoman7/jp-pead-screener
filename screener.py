@@ -17,9 +17,13 @@ def send_slack_notification(message):
         print(f"Slack通知エラー: {response.text}")
 
 def fetch_listed_companies(headers):
-    """上場銘柄一覧を取得する (J-Quants V2 正式エンドポイント)"""
-    url = "https://api.jquants.com/v2/listed/info"
+    """上場銘柄一覧を取得する (J-Quants API)"""
+    url = "https://api.jquants.com/v1/listed/info"
     response = requests.get(url, headers=headers)
+    
+    print(f"DEBUG: Response Status = {response.status_code}")
+    print(f"DEBUG: Response Body = {response.text[:200]}")
+    
     if response.status_code == 200:
         return response.json().get("info", [])
     else:
@@ -27,8 +31,8 @@ def fetch_listed_companies(headers):
         return []
 
 def fetch_daily_prices(headers, code):
-    """指定銘柄の日足株価データを取得する (J-Quants V2 正式エンドポイント)"""
-    url = f"https://api.jquants.com/v2/prices/daily_quotes?code={code}"
+    """指定銘柄の日足株価データを取得する"""
+    url = f"https://api.jquants.com/v1/prices/daily_quotes?code={code}"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json().get("daily_quotes", [])
@@ -40,7 +44,7 @@ def fetch_daily_prices(headers, code):
     return pd.DataFrame()
 
 def run_pead_screener():
-    print("PEADスクリーニングを開始します (J-Quants API V2)...")
+    print("PEADスクリーニングを開始します...")
     
     if not JQUANTS_API_KEY:
         error_msg = "❌ 【PEADスクリーニング エラー】JQUANTS_API_KEY が設定されていません。"
@@ -48,7 +52,7 @@ def run_pead_screener():
         send_slack_notification(error_msg)
         return
 
-    # J-Quants V2 正式認証: x-api-key ヘッダーにAPIキーを直接設定
+    # 正しいJ-Quants V2認証: URLはv1、ヘッダーに x-api-key を指定
     headers = {"x-api-key": JQUANTS_API_KEY}
     
     companies = fetch_listed_companies(headers)
