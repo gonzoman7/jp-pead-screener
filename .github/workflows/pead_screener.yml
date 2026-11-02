@@ -2,9 +2,9 @@ name: PEAD Stock Screener Daily Run
 
 on:
   schedule:
-    # 毎日日本時間の夕方18:00 (UTC 9:00) に自動実行する場合
+    # 毎日日本時間の夕方18:00 (UTC 9:00) に自動実行
     - cron: '0 9 * * 1-5'
-  workflow_dispatch: # 手動でも実行できるようにする設定
+  workflow_dispatch: # 手動でも今すぐ実行できるようにする設定
 
 jobs:
   run-screener:
