@@ -1,13 +1,13 @@
 import os
 import sys
 import time
-import traceback
-import jquants_api_client
 import pandas as pd
 import requests
 
 JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
+
+BASE_URL = "https://api.jquants.com/v1"
 
 
 def send_slack_notification(message):
@@ -32,35 +32,36 @@ def main():
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
     sys.exit(1)
 
-  try:
-    print("J-Quants APIへAPIキー認証を試行中...")
-    # 公式クライアントが環境変数 JQUANTS_API_KEY を自動検知します
-    cli = jquants_api_client.Client(api_key=JQUANTS_API_KEY)
-    print("認証成功しました。")
-  except Exception as e:
-    print(f"【認証エラー】J-Quantsへのログインに失敗しました: {e}")
-    traceback.print_exc()
-    sys.exit(1)
+  # APIキーが正しく渡されているか長さをチェック（セキュリティのため値自体は非表示）
+  print(f"APIキー確認: 設定されています (文字数: {len(JQUANTS_API_KEY)})")
+
+  # J-Quants公式仕様に基づくAPIキー認証ヘッダー
+  headers = {"x-api-key": JQUANTS_API_KEY}
 
   try:
     print("上場銘柄一覧を取得中...")
-    df_listed = cli.get_listed_info()
-    if df_listed is None or df_listed.empty:
-      print("【エラー】銘柄一覧が取得できませんでした（データが空です）。")
+    res = requests.get(f"{BASE_URL}/listed/info", headers=headers, timeout=15)
+    
+    print(f"APIレスポンスコード: {res.status_code}")
+    if res.status_code != 200:
+      print(f"【エラー】銘柄一覧取得失敗: {res.status_code}, 応答内容: {res.text}")
       sys.exit(1)
-    print(f"取得成功: {len(df_listed)}件")
+
+    listed_data = res.json().get("info", [])
+    df_listed = pd.DataFrame(listed_data)
+    if df_listed.empty:
+      print("【エラー】銘柄一覧が空です。")
+      sys.exit(1)
+    print(f"取得成功: 銘柄数 {len(df_listed)}件")
   except Exception as e:
     print(f"【エラー】銘柄一覧取得時に例外が発生しました: {e}")
-    traceback.print_exc()
     sys.exit(1)
 
   if "ScaleCategory" in df_listed.columns:
     df_listed = df_listed[df_listed["ScaleCategory"].notna()]
 
   matched_stocks = []
-  print(
-      "株価データの解析および出来高収縮判定を実行中（上位30銘柄テスト）..."
-  )
+  print("株価データの解析および出来高収縮判定を実行中（上位30銘柄テスト）...")
 
   for idx, row in df_listed.head(30).iterrows():
     code = row.get("Code")
@@ -70,10 +71,20 @@ def main():
       continue
 
     try:
-      df_prices = cli.get_prices_daily_quotes(code=code)
-      if df_prices is None or df_prices.empty:
+      res_p = requests.get(
+          f"{BASE_URL}/prices/daily_quotes",
+          headers=headers,
+          params={"code": code},
+          timeout=10,
+      )
+      if res_p.status_code != 200:
         continue
 
+      prices_data = res_p.json().get("daily_quotes", [])
+      if not prices_data:
+        continue
+
+      df_prices = pd.DataFrame(prices_data)
       df_prices["Date"] = pd.to_datetime(df_prices["Date"])
       df_prices = df_prices.sort_values("Date").reset_index(drop=True)
 
@@ -88,8 +99,7 @@ def main():
               "recent_vol": int(recent_vol),
               "avg_vol": int(avg_vol),
           })
-    except Exception as e:
-      print(f"[警告] 銘柄 {code} の処理中に例外: {e}")
+    except Exception:
       continue
 
     time.sleep(0.2)
@@ -104,9 +114,7 @@ def main():
     send_slack_notification(msg)
     print("スクリーニング完了・Slack通知を送信しました。")
   else:
-    print(
-        "条件に一致する銘柄はありませんでした（プログラムは正常に完走しました）。"
-    )
+    print("条件に一致する銘柄はありませんでした（プログラムは正常に完走しました）。")
 
 
 if __name__ == "__main__":
