@@ -1,7 +1,7 @@
 import os
 import sys
 import time
-import jquantsapi
+import jquants_api_client
 import pandas as pd
 import requests
 
@@ -25,15 +25,15 @@ def send_slack_notification(message):
 
 
 def main():
-  print("=== J-Quants API V2 スクリーニング処理開始 ===")
+  print("=== J-Quants API スクリーニング処理開始 ===")
 
   if not JQUANTS_API_KEY:
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
     sys.exit(1)
 
   try:
-    print("J-Quants API V2へ接続認証を試行中...")
-    cli = jquantsapi.ClientV2(api_key=JQUANTS_API_KEY)
+    print("J-Quants APIへAPIキーで接続認証を試行中...")
+    cli = jquants_api_client.Client(api_key=JQUANTS_API_KEY)
     print("認証成功しました。")
   except Exception as e:
     print(f"【認証エラー】J-Quantsへのログインに失敗しました: {e}")
