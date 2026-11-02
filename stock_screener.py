@@ -34,7 +34,6 @@ def main():
 
   try:
     print("J-Quants APIへ接続認証を試行中...")
-    # 環境変数 JQUANTS_API_KEY を自動認識します
     cli = jquants_api_client.Client()
     print("認証成功しました。")
   except Exception as e:
@@ -89,7 +88,6 @@ def main():
               "avg_vol": int(avg_vol),
           })
     except Exception as e:
-      # 個別銘柄の取得エラーはスキップしつつログに残す
       print(f"[警告] 銘柄 {code} の処理中に例外: {e}")
       continue
 
