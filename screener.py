@@ -16,19 +16,9 @@ def send_slack_notification(message):
     if response.status_code != 200:
         print(f"Slack通知エラー: {response.text}")
 
-def get_id_token(api_key):
-    """APIキーを使用してIDトークンを取得する (J-Quants V2 認証フロー)"""
-    auth_url = f"https://api.jquants.com/v1/token/auth_key?key={api_key}"
-    response = requests.post(auth_url)
-    if response.status_code == 200:
-        return response.json().get("idToken")
-    else:
-        print(f"IDトークン取得エラー ({response.status_code}): {response.text}")
-        return None
-
 def fetch_listed_companies(headers):
-    """上場銘柄一覧を取得する"""
-    url = "https://api.jquants.com/v1/listed/info"
+    """上場銘柄一覧を取得する (J-Quants V2 正式エンドポイント)"""
+    url = "https://api.jquants.com/v2/listed/info"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         return response.json().get("info", [])
@@ -37,8 +27,8 @@ def fetch_listed_companies(headers):
         return []
 
 def fetch_daily_prices(headers, code):
-    """指定銘柄の日足株価データを取得する"""
-    url = f"https://api.jquants.com/v1/prices/daily_quotes?code={code}"
+    """指定銘柄の日足株価データを取得する (J-Quants V2 正式エンドポイント)"""
+    url = f"https://api.jquants.com/v2/prices/daily_quotes?code={code}"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json().get("daily_quotes", [])
@@ -58,16 +48,8 @@ def run_pead_screener():
         send_slack_notification(error_msg)
         return
 
-    # 1. APIキーからIDトークンを取得
-    id_token = get_id_token(JQUANTS_API_KEY)
-    if not id_token:
-        error_msg = "❌ 【PEADスクリーニング エラー】J-QuantsのIDトークン取得に失敗しました（APIキーをご確認ください）。"
-        print(error_msg)
-        send_slack_notification(error_msg)
-        return
-
-    # 2. 取得したIDトークンをBearer認証ヘッダーにセット
-    headers = {"Authorization": f"Bearer {id_token}"}
+    # J-Quants V2 正式認証: x-api-key ヘッダーにAPIキーを直接設定
+    headers = {"x-api-key": JQUANTS_API_KEY}
     
     companies = fetch_listed_companies(headers)
     if not companies:
