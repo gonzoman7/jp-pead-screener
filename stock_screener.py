@@ -39,6 +39,15 @@ def main():
     print("J-Quants APIへ接続認証を試行中...")
     cli = jquantsapi.Client(mail_address=JQUANTS_MAIL, password=JQUANTS_PASSWORD)
     print("認証成功しました。")
+  except AttributeError:
+    try:
+      print("Clientクラスが見つからないため、別メソッドで認証を試行中...")
+      cli = jquantsapi.Client()
+      cli.get_refresh_token(mail_address=JQUANTS_MAIL, password=JQUANTS_PASSWORD)
+      print("認証成功しました。")
+    except Exception as e:
+      print(f"【認証エラー】J-Quantsへのログインに失敗しました: {e}")
+      sys.exit(1)
   except Exception as e:
     print(f"【認証エラー】J-Quantsへのログインに失敗しました: {e}")
     sys.exit(1)
