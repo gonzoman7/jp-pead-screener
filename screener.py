@@ -16,6 +16,16 @@ def send_slack_notification(message):
     if response.status_code != 200:
         print(f"Slack通知エラー: {response.text}")
 
+def get_id_token(api_key):
+    """APIキーを使用してIDトークンを取得する (J-Quants V2 認証フロー)"""
+    auth_url = f"https://api.jquants.com/v1/token/auth_key?key={api_key}"
+    response = requests.post(auth_url)
+    if response.status_code == 200:
+        return response.json().get("idToken")
+    else:
+        print(f"IDトークン取得エラー ({response.status_code}): {response.text}")
+        return None
+
 def fetch_listed_companies(headers):
     """上場銘柄一覧を取得する"""
     url = "https://api.jquants.com/v1/listed/info"
@@ -40,20 +50,24 @@ def fetch_daily_prices(headers, code):
     return pd.DataFrame()
 
 def run_pead_screener():
-    print("PEADスクリーニングを開始します (J-Quants API)...")
+    print("PEADスクリーニングを開始します (J-Quants API V2)...")
     
-    # ── デバッグ用コード：APIキーが正しく渡されているかログ出力する ──
-    print(f"DEBUG: API_KEY length = {len(JQUANTS_API_KEY) if JQUANTS_API_KEY else 0}")
-    print(f"DEBUG: API_KEY start = {JQUANTS_API_KEY[:4] if JQUANTS_API_KEY else 'None'}...")
-
     if not JQUANTS_API_KEY:
         error_msg = "❌ 【PEADスクリーニング エラー】JQUANTS_API_KEY が設定されていません。"
         print(error_msg)
         send_slack_notification(error_msg)
         return
 
-    # APIキー認証ヘッダー
-    headers = {"x-api-key": JQUANTS_API_KEY}
+    # 1. APIキーからIDトークンを取得
+    id_token = get_id_token(JQUANTS_API_KEY)
+    if not id_token:
+        error_msg = "❌ 【PEADスクリーニング エラー】J-QuantsのIDトークン取得に失敗しました（APIキーをご確認ください）。"
+        print(error_msg)
+        send_slack_notification(error_msg)
+        return
+
+    # 2. 取得したIDトークンをBearer認証ヘッダーにセット
+    headers = {"Authorization": f"Bearer {id_token}"}
     
     companies = fetch_listed_companies(headers)
     if not companies:
