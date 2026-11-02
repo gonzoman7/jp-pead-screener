@@ -1,13 +1,11 @@
 import os
+import sys
 import time
-from datetime import datetime, timedelta
 import jquantsapi
 import pandas as pd
 import requests
 
-# ==========================================
-# 環境変数からの設定読み込み (GitHub Secrets連携)
-# ==========================================
+# GitHub Secretsから認証情報を取得
 JQUANTS_MAIL = os.environ.get("JQUANTS_MAIL")
 JQUANTS_PASSWORD = os.environ.get("JQUANTS_PASSWORD")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
@@ -22,48 +20,62 @@ def send_slack_notification(message):
 
   payload = {"text": message}
   try:
-    response = requests.post(SLACK_WEBHOOK_URL, json=payload)
+    response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
     if response.status_code != 200:
-      print(
-          f"Slack通知エラー: {response.status_code}, 応答:"
-          f" {response.text}"
-      )
+      print(f"Slack通知エラー: {response.status_code}, 応答: {response.text}")
   except Exception as e:
     print(f"Slack通知例外発生: {e}")
 
 
 def main():
-  print("=== J-Quants V2 PEAD & 出来高ブレイクアウト スクリーニング開始 ===")
+  print("=== J-Quants V2 スクリーニング処理開始 ===")
 
+  # 認証情報の存在チェック
   if not JQUANTS_MAIL or not JQUANTS_PASSWORD:
-    print("エラー: J-Quantsの認証情報（メールアドレス・パスワード）が設定されていません。")
-    return
+    print(
+        "【エラー】JQUANTS_MAIL または JQUANTS_PASSWORD"
+        " の環境変数が設定されていません。"
+    )
+    print(
+        "GitHubの Repository Secrets に正しく登録されているかご確認ください。"
+    )
+    sys.exit(1)
 
   try:
-    # 1. J-Quants V2 クライアントの初期化と認証
+    print("J-Quants APIへ接続認証を試行中...")
     cli = jquantsapi.Client(mail_address=JQUANTS_MAIL, password=JQUANTS_PASSWORD)
+    print("認証成功しました。")
   except Exception as e:
-    print(f"J-Quants 認証エラー: {e}")
-    return
+    print(f"【認証エラー】J-Quantsへのログインに失敗しました: {e}")
+    sys.exit(1)
 
-  # 2. 上場銘柄一覧の取得 (V2)
   try:
+    print("上場銘柄一覧を取得中...")
     df_listed = cli.get_listed_info()
-    print(f"上場銘柄数: {len(df_listed)}件のデータを取得しました。")
+    if df_listed is None or df_listed.empty:
+      print("【エラー】銘柄一覧が取得できませんでした（データが空です）。")
+      sys.exit(1)
+    print(f"取得成功: {len(df_listed)}件")
   except Exception as e:
-    print(f"銘柄一覧取得エラー: {e}")
-    return
+    print(f"【エラー】銘柄一覧取得時に例外が発生しました: {e}")
+    sys.exit(1)
 
   # 通常株等に絞り込み
-  df_listed = df_listed[df_listed["ScaleCategory"].notna()]
+  if "ScaleCategory" in df_listed.columns:
+    df_listed = df_listed[df_listed["ScaleCategory"].notna()]
 
   matched_stocks = []
-  print("財務・株価データの解析およびPEAD・出来高収縮判定を実行中...")
+  print(
+      "株価データの解析および出来高収縮判定を実行中（上位30銘柄テスト）..."
+  )
 
-  # 対象銘柄のループ処理（必要に応じて制限や調整を行ってください）
-  for idx, row in df_listed.head(50).iterrows():
-    code = row["Code"]
-    name = row["CompanyName"]
+  # テストとして上位30件で安全に実行
+  for idx, row in df_listed.head(30).iterrows():
+    code = row.get("Code")
+    name = row.get("CompanyName", "名称不明")
+
+    if not code:
+      continue
 
     try:
       df_prices = cli.get_prices_daily_quotes(code=code)
@@ -73,7 +85,6 @@ def main():
       df_prices["Date"] = pd.to_datetime(df_prices["Date"])
       df_prices = df_prices.sort_values("Date").reset_index(drop=True)
 
-      # 出来高収縮の判定ロジック例
       if len(df_prices) > 20:
         recent_vol = df_prices["Volume"].tail(5).mean()
         avg_vol = df_prices["Volume"].tail(25).mean()
@@ -86,11 +97,12 @@ def main():
               "avg_vol": int(avg_vol),
           })
     except Exception as e:
+      # 個別銘柄のエラーで全体が止まらないようにスキップ
       continue
 
     time.sleep(0.2)
 
-  # 3. 結果のまとめとSlack通知
+  # 結果通知
   if matched_stocks:
     msg = "*【PEAD・出来高収縮スクリーニング結果】*\n以下の銘柄が条件を検知しました：\n"
     for stock in matched_stocks:
@@ -101,7 +113,9 @@ def main():
     send_slack_notification(msg)
     print("スクリーニング完了・Slack通知を送信しました。")
   else:
-    print("条件に一致する銘柄はありませんでした。")
+    print(
+        "条件に一致する銘柄はありませんでした（プログラムは正常に完走しました）。"
+    )
 
 
 if __name__ == "__main__":
