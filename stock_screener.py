@@ -1,3 +1,4 @@
+
 import os
 import sys
 import time
@@ -8,7 +9,8 @@ import requests
 JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
 
-BASE_URL = "https://api.jquants.com/v1"
+# J-Quants API V2のベースURL
+BASE_URL = "https://api.jquants.com/v2"
 
 
 def send_slack_notification(message):
@@ -27,24 +29,26 @@ def send_slack_notification(message):
 
 
 def main():
-  print("=== J-Quants API スクリーニング処理開始 ===")
+  print("=== J-Quants API V2 スクリーニング処理開始 ===")
 
   if not JQUANTS_API_KEY:
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
     sys.exit(1)
 
-  # 正しいAPIキー認証ヘッダー
+  # V2認証ヘッダー（x-api-key）
   headers = {"x-api-key": JQUANTS_API_KEY}
 
   try:
-    print("上場銘柄一覧を取得中...")
-    res = requests.get(f"{BASE_URL}/listed/info", headers=headers, timeout=15)
+    print("上場銘柄一覧（マスター）を取得中...")
+    res = requests.get(f"{BASE_URL}/equities/master", headers=headers, timeout=15)
 
     if res.status_code != 200:
       print(f"【エラー】銘柄一覧取得失敗: {res.status_code}, 応答内容: {res.text}")
       sys.exit(1)
 
-    listed_data = res.json().get("info", [])
+    # V2のレスポンス構造（通常は "equities" または "info" に格納されます）
+    res_json = res.json()
+    listed_data = res_json.get("equities", res_json.get("info", []))
     df_listed = pd.DataFrame(listed_data)
     print(f"取得成功: 銘柄数 {len(df_listed)}件")
   except Exception as e:
@@ -66,7 +70,7 @@ def main():
 
     try:
       res_p = requests.get(
-          f"{BASE_URL}/prices/daily_quotes",
+          f"{BASE_URL}/equities/bars/daily",
           headers=headers,
           params={"code": code},
           timeout=10,
