@@ -1,4 +1,3 @@
-
 import os
 import sys
 import time
@@ -46,13 +45,17 @@ def main():
       print(f"【エラー】銘柄一覧取得失敗: {res.status_code}, 応答内容: {res.text}")
       sys.exit(1)
 
-    # V2のレスポンス構造（通常は "equities" または "info" に格納されます）
+    # V2のマスターのレスポンス仕様（"data" キーにリストが格納されます）
     res_json = res.json()
-    listed_data = res_json.get("equities", res_json.get("info", []))
+    listed_data = res_json.get("data", [])
     df_listed = pd.DataFrame(listed_data)
     print(f"取得成功: 銘柄数 {len(df_listed)}件")
   except Exception as e:
     print(f"【エラー】銘柄一覧取得時に例外が発生しました: {e}")
+    sys.exit(1)
+
+  if df_listed.empty:
+    print("【エラー】取得した銘柄マスターが空です。")
     sys.exit(1)
 
   if "ScaleCategory" in df_listed.columns:
