@@ -13,6 +13,7 @@ BASE_URL = "https://api.jquants.com/v2"
 
 
 def send_slack_notification(message):
+  """Slackにメッセージを送信する"""
   if not SLACK_WEBHOOK_URL or "hooks.slack.com" not in SLACK_WEBHOOK_URL:
     print("[Slack通知スキップ] Webhook URLが未設定です。")
     print(message)
@@ -21,7 +22,9 @@ def send_slack_notification(message):
   payload = {"text": message}
   try:
     response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-    if response.status_code != 200:
+    if response.status_code == 200:
+      print("Slack通知を送信しました。")
+    else:
       print(f"Slack通知エラー: {response.status_code}, 応答: {response.text}")
   except Exception as e:
     print(f"Slack通知例外発生: {e}")
@@ -34,7 +37,7 @@ def main():
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
     sys.exit(1)
 
-  # V2認証ヘッダー（x-api-key）
+  # V2認証ヘッダー
   headers = {"x-api-key": JQUANTS_API_KEY}
 
   try:
@@ -43,27 +46,37 @@ def main():
 
     if res.status_code != 200:
       print(f"【エラー】銘柄一覧取得失敗: {res.status_code}, 応答内容: {res.text}")
+      send_slack_notification(
+          f"⚠️ *【PEADスクリーニング エラー】*\n銘柄一覧の取得に失敗しました (ステータスコード:"
+          f" {res.status_code})。"
+      )
       sys.exit(1)
 
-    # V2のマスターのレスポンス仕様（"data" キーにリストが格納されます）
     res_json = res.json()
     listed_data = res_json.get("data", [])
     df_listed = pd.DataFrame(listed_data)
     print(f"取得成功: 銘柄数 {len(df_listed)}件")
   except Exception as e:
     print(f"【エラー】銘柄一覧取得時に例外が発生しました: {e}")
+    send_slack_notification(
+        f"⚠️ *【PEADスクリーニング エラー】*\nプログラム実行中に例外が発生しました: {e}"
+    )
     sys.exit(1)
 
   if df_listed.empty:
     print("【エラー】取得した銘柄マスターが空です。")
+    send_slack_notification(
+        "⚠️ *【PEADスクリーニング エラー】*\n取得した銘柄マスターが空でした。"
+    )
     sys.exit(1)
 
   if "ScaleCategory" in df_listed.columns:
     df_listed = df_listed[df_listed["ScaleCategory"].notna()]
 
   matched_stocks = []
-  print("株価データの解析および出来高収縮判定を実行中（上位30銘柄テスト）...")
+  print("株価データの解析および出来高収縮判定を実行中...")
 
+  # スクリーニング実行（上位30銘柄でテスト判定）
   for idx, row in df_listed.head(30).iterrows():
     code = row.get("Code")
     name = row.get("CompanyName", "名称不明")
@@ -105,6 +118,7 @@ def main():
 
     time.sleep(0.2)
 
+  # 毎日必ずSlackへ通知を送る処理
   if matched_stocks:
     msg = "*【PEAD・出来高収縮スクリーニング結果】*\n以下の銘柄が条件を検知しました：\n"
     for stock in matched_stocks:
@@ -112,10 +126,15 @@ def main():
           f"• *{stock['code']}* {stock['name']} (直近出来高平均:"
           f" {stock['recent_vol']:,})\n"
       )
-    send_slack_notification(msg)
-    print("スクリーニング完了・Slack通知を送信しました。")
   else:
-    print("条件に一致する銘柄はありませんでした（プログラムは正常に完走しました）。")
+    msg = (
+        "*【PEAD・出来高収縮スクリーニング結果】*\n"
+        "本日のスクリーニングが正常に完了しました。\n"
+        "※該当する条件を満たす銘柄はありませんでした（0件）。"
+    )
+
+  send_slack_notification(msg)
+  print("スクリーニング完了・通知処理を終了しました。")
 
 
 if __name__ == "__main__":
