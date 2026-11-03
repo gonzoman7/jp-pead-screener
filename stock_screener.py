@@ -1,13 +1,14 @@
 import os
 import sys
 import time
-import traceback
-import jquants_api_client
 import pandas as pd
 import requests
 
+# GitHub Secretsから認証情報を取得
 JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
+
+BASE_URL = "https://api.jquants.com/v1"
 
 
 def send_slack_notification(message):
@@ -32,25 +33,22 @@ def main():
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
     sys.exit(1)
 
-  try:
-    print("公式クライアントによるAPI認証を試行中...")
-    cli = jquants_api_client.Client(api_key=JQUANTS_API_KEY)
-    print("認証に成功しました。")
-  except Exception as e:
-    print(f"【認証エラー】: {e}")
-    traceback.print_exc()
-    sys.exit(1)
+  # 正しいAPIキー認証ヘッダー
+  headers = {"x-api-key": JQUANTS_API_KEY}
 
   try:
     print("上場銘柄一覧を取得中...")
-    df_listed = cli.get_listed_info()
-    if df_listed is None or df_listed.empty:
-      print("【エラー】銘柄一覧が取得できませんでした。")
+    res = requests.get(f"{BASE_URL}/listed/info", headers=headers, timeout=15)
+
+    if res.status_code != 200:
+      print(f"【エラー】銘柄一覧取得失敗: {res.status_code}, 応答内容: {res.text}")
       sys.exit(1)
+
+    listed_data = res.json().get("info", [])
+    df_listed = pd.DataFrame(listed_data)
     print(f"取得成功: 銘柄数 {len(df_listed)}件")
   except Exception as e:
     print(f"【エラー】銘柄一覧取得時に例外が発生しました: {e}")
-    traceback.print_exc()
     sys.exit(1)
 
   if "ScaleCategory" in df_listed.columns:
@@ -67,10 +65,20 @@ def main():
       continue
 
     try:
-      df_prices = cli.get_prices_daily_quotes(code=code)
-      if df_prices is None or df_prices.empty:
+      res_p = requests.get(
+          f"{BASE_URL}/prices/daily_quotes",
+          headers=headers,
+          params={"code": code},
+          timeout=10,
+      )
+      if res_p.status_code != 200:
         continue
 
+      prices_data = res_p.json().get("daily_quotes", [])
+      if not prices_data:
+        continue
+
+      df_prices = pd.DataFrame(prices_data)
       df_prices["Date"] = pd.to_datetime(df_prices["Date"])
       df_prices = df_prices.sort_values("Date").reset_index(drop=True)
 
