@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-cache-dir jquants-api-client pandas requests
+          pip install pandas requests
 
       - name: Run Screener Script
         env:
