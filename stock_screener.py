@@ -1,3 +1,4 @@
+
 import os
 import sys
 import time
@@ -31,7 +32,7 @@ def send_slack_notification(message):
 
 
 def main():
-  print("=== J-Quants API V2 スクリーニング処理開始 ===")
+  print("=== J-Quants API V2 全銘柄スクリーニング処理開始 ===")
 
   if not JQUANTS_API_KEY:
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
@@ -74,10 +75,11 @@ def main():
     df_listed = df_listed[df_listed["ScaleCategory"].notna()]
 
   matched_stocks = []
-  print("株価データの解析および出来高収縮判定を実行中...")
+  total_checked = 0
+  print("全銘柄の株価データ解析および出来高収縮判定を実行中...")
 
-  # スクリーニング実行（上位30銘柄でテスト判定）
-  for idx, row in df_listed.head(30).iterrows():
+  # ★変更点: head(30)を外し、全銘柄をループ処理します
+  for idx, row in df_listed.iterrows():
     code = row.get("Code")
     name = row.get("CompanyName", "名称不明")
 
@@ -113,28 +115,35 @@ def main():
               "recent_vol": int(recent_vol),
               "avg_vol": int(avg_vol),
           })
+
+      total_checked += 1
     except Exception:
       continue
 
-    time.sleep(0.2)
+    # APIの負荷軽減とレートリミット対策のためのウェイト
+    time.sleep(0.1)
+
+  print(f"判定完了: 检查銘柄数 {total_checked}件, ヒット銘柄数 {len(matched_stocks)}件")
 
   # 毎日必ずSlackへ通知を送る処理
   if matched_stocks:
-    msg = "*【PEAD・出来高収縮スクリーニング結果】*\n以下の銘柄が条件を検知しました：\n"
-    for stock in matched_stocks:
+    msg = f"*【PEAD・出来高収縮スクリーニング結果】*\n以下の銘柄 ({len(matched_stocks)}件) が条件を検知しました：\n"
+    for stock in matched_stocks[:20]:  # 多すぎる場合は上位20件まで表示
       msg += (
           f"• *{stock['code']}* {stock['name']} (直近出来高平均:"
           f" {stock['recent_vol']:,})\n"
       )
+    if len(matched_stocks) > 20:
+      msg += f"\n...他 {len(matched_stocks) - 20} 銘柄"
   else:
     msg = (
         "*【PEAD・出来高収縮スクリーニング結果】*\n"
-        "本日のスクリーニングが正常に完了しました。\n"
-        "※該当する条件を満たす銘柄はありませんでした（0件）。"
+        "本日の全銘柄スクリーニングが完了しました。\n"
+        "※条件を満たす銘柄はありませんでした（0件）。"
     )
 
   send_slack_notification(msg)
-  print("スクリーニング完了・通知処理を終了しました。")
+  print("通知処理を終了しました。")
 
 
 if __name__ == "__main__":
