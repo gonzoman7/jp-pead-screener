@@ -31,7 +31,7 @@ def send_slack_notification(message):
 
 
 def fetch_stock_data(code, name, headers):
-  """個別銘柄の株価データを取得し、出来高収縮条件を判定する"""
+  """個別銘柄の株価データを取得し、出来高比率を算出する"""
   try:
     res = requests.get(
         f"{BASE_URL}/equities/bars/daily",
@@ -54,13 +54,14 @@ def fetch_stock_data(code, name, headers):
       recent_vol = df["Volume"].tail(5).mean()
       avg_vol = df["Volume"].tail(25).mean()
 
-      # ★ 出来高収縮条件: 直近5日平均 < 過去25日平均 × 0.8 に変更
-      if avg_vol > 0 and (recent_vol / avg_vol) < 0.8:
+      if avg_vol > 0:
+        ratio = recent_vol / avg_vol
         return {
             "code": code,
             "name": name,
             "recent_vol": int(recent_vol),
             "avg_vol": int(avg_vol),
+            "ratio": ratio,
         }
   except Exception:
     pass
@@ -68,7 +69,9 @@ def fetch_stock_data(code, name, headers):
 
 
 def main():
-  print("=== J-Quants API V2 全銘柄並行スクリーニング開始 (条件: < 0.8) ===")
+  print(
+      "=== J-Quants API V2 全銘柄並行スクリーニング開始 (条件: 比率 < 0.8) ==="
+  )
 
   if not JQUANTS_API_KEY:
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
@@ -105,7 +108,7 @@ def main():
         f"対象銘柄数: {len(stocks_to_check)}件。並行処理による解析を開始します..."
     )
 
-    matched_stocks = []
+    all_results = []
 
     # ThreadPoolExecutorを用いて複数スレッドで同時並行リクエスト
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
@@ -117,17 +120,38 @@ def main():
       for future in concurrent.futures.as_completed(futures):
         result = future.result()
         if result:
-          matched_stocks.append(result)
+          all_results.append(result)
 
-    print(f"解析完了: ヒット銘柄数 {len(matched_stocks)}件")
+    # 比率が 0.8 未満のものをヒットとして抽出
+    matched_stocks = [item for item in all_results if item["ratio"] < 0.8]
+
+    print(
+        f"解析完了: スキャン成功銘柄 {len(all_results)}件 / 条件適合(比率 <"
+        f" 0.8) {len(matched_stocks)}件"
+    )
+
+    # ヒット銘柄が0件の場合、条件に最も近かった（比率が低かった）上位5銘柄をログに出力
+    if not matched_stocks and all_results:
+      sorted_closest = sorted(all_results, key=lambda x: x["ratio"])[:5]
+      print("\n--- 【分析ログ】本日最も出来高が収縮していた上位5銘柄 ---")
+      for s in sorted_closest:
+        print(
+            f"銘柄: {s['code']} {s['name']} | 比率:"
+            f" {s['ratio']:.3f} (直近5日平均: {s['recent_vol']:,} /"
+            f" 過去25日平均: {s['avg_vol']:,})"
+        )
+      print("----------------------------------------------------\n")
 
     # 毎日必ずSlackへ通知を送る処理
     if matched_stocks:
-      msg = f"*【PEAD・出来高収縮スクリーニング結果 (<0.8)】*\n全市場から以下の銘柄 ({len(matched_stocks)}件) が条件を検知しました：\n"
+      msg = (
+          f"*【PEAD・出来高収縮スクリーニング結果 (<0.8)】*\n"
+          f"全市場から以下の銘柄 ({len(matched_stocks)}件) が条件を検知しました：\n"
+      )
       for stock in matched_stocks[:20]:
         msg += (
-            f"• *{stock['code']}* {stock['name']} (直近出来高平均:"
-            f" {stock['recent_vol']:,})\n"
+            f"• *{stock['code']}* {stock['name']} (比率: {stock['ratio']:.2f},"
+            f" 直近出来高平均: {stock['recent_vol']:,})\n"
         )
       if len(matched_stocks) > 20:
         msg += f"\n...他 {len(matched_stocks) - 20} 銘柄"
