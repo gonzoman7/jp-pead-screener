@@ -1,6 +1,7 @@
-import concurrent.futures
 import os
 import sys
+import time
+from datetime import datetime, timedelta
 import pandas as pd
 import requests
 
@@ -30,47 +31,10 @@ def send_slack_notification(message):
     print(f"Slack通知例外発生: {e}")
 
 
-def fetch_stock_data(code, name, headers):
-  """個別銘柄の株価データを取得し、出来高比率を算出する"""
-  try:
-    res = requests.get(
-        f"{BASE_URL}/equities/bars/daily",
-        headers=headers,
-        params={"code": code},
-        timeout=8,
-    )
-    if res.status_code != 200:
-      return None
-
-    data = res.json().get("daily_quotes", [])
-    if not data:
-      return None
-
-    df = pd.DataFrame(data)
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.sort_values("Date").reset_index(drop=True)
-
-    if len(df) > 20:
-      recent_vol = df["Volume"].tail(5).mean()
-      avg_vol = df["Volume"].tail(25).mean()
-
-      if avg_vol > 0:
-        ratio = recent_vol / avg_vol
-        return {
-            "code": code,
-            "name": name,
-            "recent_vol": int(recent_vol),
-            "avg_vol": int(avg_vol),
-            "ratio": ratio,
-        }
-  except Exception:
-    pass
-  return None
-
-
 def main():
   print(
-      "=== J-Quants API V2 全銘柄並行スクリーニング開始 (条件: 比率 < 0.8) ==="
+      "=== J-Quants API V2 日付一括取得スクリーニング開始 (条件: 比率 < 0.8)"
+      " ==="
   )
 
   if not JQUANTS_API_KEY:
@@ -80,7 +44,8 @@ def main():
   headers = {"x-api-key": JQUANTS_API_KEY}
 
   try:
-    print("上場銘柄一覧（マスター）を取得中...")
+    # 1. 上場銘柄マスターの取得（銘柄名マップ作成用）
+    print("① 上場銘柄マスターを取得中...")
     res_m = requests.get(
         f"{BASE_URL}/equities/master", headers=headers, timeout=15
     )
@@ -93,56 +58,106 @@ def main():
 
     master_list = res_m.json().get("data", [])
     df_master = pd.DataFrame(master_list)
-
-    if "ScaleCategory" in df_master.columns:
-      df_master = df_master[df_master["ScaleCategory"].notna()]
-
-    stocks_to_check = []
-    for _, row in df_master.iterrows():
-      code = row.get("Code")
-      name = row.get("CompanyName", "名称不明")
-      if code:
-        stocks_to_check.append((code, name))
-
-    print(
-        f"対象銘柄数: {len(stocks_to_check)}件。並行処理による解析を開始します..."
+    name_map = (
+        dict(zip(df_master["Code"], df_master["CompanyName"]))
+        if "CompanyName" in df_master.columns
+        else {}
     )
 
-    all_results = []
+    # 2. 過去25営業日分の株価データを日付指定で一括取得（レート制限に配慮）
+    print("② 過去25営業日分の株価データを日付指定で一括取得中...")
+    all_quotes = []
+    success_days = 0
+    current_date = datetime.now()
+    check_days = 0
 
-    # ThreadPoolExecutorを用いて複数スレッドで同時並行リクエスト
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-      futures = {
-          executor.submit(fetch_stock_data, code, name, headers): (code, name)
-          for code, name in stocks_to_check
-      }
+    # 営業日を遡りながら25営業日分のデータを収集
+    while success_days < 25 and check_days < 60:
+      date_str = current_date.strftime("%Y-%m-%d")
+      # 土日（5:土, 6:日）を除外
+      if current_date.weekday() < 5:
+        res_d = requests.get(
+            f"{BASE_URL}/equities/bars/daily",
+            headers=headers,
+            params={"date": date_str},
+            timeout=15,
+        )
+        if res_d.status_code == 200:
+          quotes = res_d.json().get("daily_quotes", [])
+          if quotes:
+            all_quotes.extend(quotes)
+            success_days += 1
+            print(f"  - 取得成功: {date_str} ({len(quotes)}銘柄)")
+        # ライトプランの制限（60 req/min）を安全に守るためのウェイト
+        time.sleep(0.5)
 
-      for future in concurrent.futures.as_completed(futures):
-        result = future.result()
-        if result:
-          all_results.append(result)
+      current_date -= timedelta(days=1)
+      check_days += 1
 
-    # 比率が 0.8 未満のものをヒットとして抽出
-    matched_stocks = [item for item in all_results if item["ratio"] < 0.8]
+    if not all_quotes:
+      print("【エラー】有効な株価データが1件も取得できませんでした。")
+      send_slack_notification(
+          "⚠️ *【PEADスクリーニング エラー】* 有効な株価データが取得できませんでした。"
+      )
+      sys.exit(1)
 
+    # 3. pandasによる高速集計・判定
     print(
-        f"解析完了: スキャン成功銘柄 {len(all_results)}件 / 条件適合(比率 <"
-        f" 0.8) {len(matched_stocks)}件"
+        f"③ 取得完了（有効営業日: {success_days}日）。"
+        "メモリ上で高速判定を実行中..."
+    )
+    df_all = pd.DataFrame(all_quotes)
+    df_all["Date"] = pd.to_datetime(df_all["Date"])
+    df_all = df_all.sort_values(["Code", "Date"])
+
+    results = []
+    for code, group in df_all.groupby("Code"):
+      if len(group) >= 10:
+        recent_vol = group["Volume"].tail(5).mean()
+        avg_vol = group["Volume"].tail(25).mean()
+
+        if avg_vol > 0:
+          ratio = recent_vol / avg_vol
+          name = name_map.get(code, "名称不明")
+          results.append({
+              "code": code,
+              "name": name,
+              "recent_vol": int(recent_vol),
+              "avg_vol": int(avg_vol),
+              "ratio": ratio,
+          })
+
+    df_results = pd.DataFrame(results)
+    if df_results.empty:
+      print("【警告】集計可能な銘柄データがありませんでした。")
+      send_slack_notification(
+          "*【PEADスクリーニング結果 (<0.8)】*\n集計可能な銘柄データがありませんでした。"
+      )
+      return
+
+    # 条件（比率 < 0.8）に合致する銘柄を抽出
+    matched_stocks = df_results[df_results["ratio"] < 0.8].to_dict(
+        orient="records"
     )
 
-    # ヒット銘柄が0件の場合、条件に最も近かった（比率が低かった）上位5銘柄をログに出力
-    if not matched_stocks and all_results:
-      sorted_closest = sorted(all_results, key=lambda x: x["ratio"])[:5]
+    print(
+        f"解析完了: 有効銘柄数 {len(df_results)}件 / 条件適合(比率 < 0.8)"
+        f" {len(matched_stocks)}件"
+    )
+
+    # ヒットが0件の場合、最も比率が低かった（条件に近かった）上位5銘柄をログに出力
+    if not matched_stocks:
+      sorted_closest = df_results.sort_values("ratio").head(5)
       print("\n--- 【分析ログ】本日最も出来高が収縮していた上位5銘柄 ---")
-      for s in sorted_closest:
+      for _, s in sorted_closest.iterrows():
         print(
-            f"銘柄: {s['code']} {s['name']} | 比率:"
-            f" {s['ratio']:.3f} (直近5日平均: {s['recent_vol']:,} /"
-            f" 過去25日平均: {s['avg_vol']:,})"
+            f"銘柄: {s['code']} {s['name']} | 比率: {s['ratio']:.3f}"
+            f" (直近5日平均: {s['recent_vol']:,} / 過去25日平均:"
+            f" {s['avg_vol']:,})"
         )
       print("----------------------------------------------------\n")
 
-    # 毎日必ずSlackへ通知を送る処理
+    # Slack通知
     if matched_stocks:
       msg = (
           f"*【PEAD・出来高収縮スクリーニング結果 (<0.8)】*\n"
