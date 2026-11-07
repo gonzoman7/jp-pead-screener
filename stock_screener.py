@@ -54,8 +54,8 @@ def fetch_stock_data(code, name, headers):
       recent_vol = df["Volume"].tail(5).mean()
       avg_vol = df["Volume"].tail(25).mean()
 
-      # 出来高収縮条件: 直近5日平均 < 過去25日平均 × 0.7
-      if avg_vol > 0 and (recent_vol / avg_vol) < 0.7:
+      # ★ 出来高収縮条件: 直近5日平均 < 過去25日平均 × 0.8 に変更
+      if avg_vol > 0 and (recent_vol / avg_vol) < 0.8:
         return {
             "code": code,
             "name": name,
@@ -68,7 +68,7 @@ def fetch_stock_data(code, name, headers):
 
 
 def main():
-  print("=== J-Quants API V2 並行高速スクリーニング開始 ===")
+  print("=== J-Quants API V2 全銘柄並行スクリーニング開始 (条件: < 0.8) ===")
 
   if not JQUANTS_API_KEY:
     print("【エラー】JQUANTS_API_KEY の環境変数が設定されていません。")
@@ -107,7 +107,7 @@ def main():
 
     matched_stocks = []
 
-    # ThreadPoolExecutorを用いて複数スレッドで同時並行リクエスト（約20〜30秒で全件完了）
+    # ThreadPoolExecutorを用いて複数スレッドで同時並行リクエスト
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
       futures = {
           executor.submit(fetch_stock_data, code, name, headers): (code, name)
@@ -123,7 +123,7 @@ def main():
 
     # 毎日必ずSlackへ通知を送る処理
     if matched_stocks:
-      msg = f"*【PEAD・出来高収縮スクリーニング結果】*\n以下の銘柄 ({len(matched_stocks)}件) が条件を検知しました：\n"
+      msg = f"*【PEAD・出来高収縮スクリーニング結果 (<0.8)】*\n全市場から以下の銘柄 ({len(matched_stocks)}件) が条件を検知しました：\n"
       for stock in matched_stocks[:20]:
         msg += (
             f"• *{stock['code']}* {stock['name']} (直近出来高平均:"
@@ -133,7 +133,7 @@ def main():
         msg += f"\n...他 {len(matched_stocks) - 20} 銘柄"
     else:
       msg = (
-          "*【PEAD・出来高収縮スクリーニング結果】*\n"
+          "*【PEAD・出来高収縮スクリーニング結果 (<0.8)】*\n"
           "本日の全銘柄スクリーニングが完了しました。\n"
           "※条件を満たす銘柄はありませんでした（0件）。"
       )
