@@ -1,0 +1,32 @@
+name: Standalone Screener Run
+
+on:
+  # 手動（GitHubの画面上）からいつでもテスト実行できるようにする設定
+  workflow_dispatch:
+  
+  # （必要に応じて）毎日夕方や朝に自動実行したい場合のスケジュール設定（例: 平日の日本時間 17:00）
+  # schedule:
+  #   - cron: '0 8 * * 1-5'
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir requests pandas
+
+      - name: Run standalone screener
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python standalone_screener.py
